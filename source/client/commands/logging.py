@@ -1,6 +1,6 @@
 from source.client.config.imports import *
 from source.client.config.client import client
-from source.client.config.logging_config import save_logging_channel, get_logging_channel
+from source.client.config.logging_config import save_logging_channel, get_logging_channel, load_logging_channels
 
 async def send_log(guild_id: int, embed: Embed):
 	"""Send a log message to the configured logging channel"""
@@ -11,6 +11,9 @@ async def send_log(guild_id: int, embed: Embed):
 			await channel.send(embed=embed)
 
 def setup(tree: app_commands.CommandTree, server_id: str):
+
+	load_logging_channels()
+
 	@tree.command(
 		name="setlogchannel",
 		description="Setzt den Kanal für Bot-Logs (nur Admin)",
