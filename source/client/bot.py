@@ -1,5 +1,6 @@
 from source.client.config.imports import *
 from source.client.config.client import client
+from source.client.commands import radio, logging
 
 tracemalloc.start()
 
@@ -12,6 +13,10 @@ tree = discord.app_commands.CommandTree(client)
 
 @client.event
 async def on_ready():
+
+    radio.setup(tree, server_id)
+    logging.setup(tree, server_id)
+    
     await tree.sync(guild=discord.Object(id=server_id))
     print(f'Angemeldet als {client.user.name} (ID: {client.user.id})')
 
