@@ -1,6 +1,6 @@
 from source.client.config.imports import *
 from source.client.config.client import client
-from source.client.commands import radio, logging, system, voicechannels
+from source.client.commands import radio, logging, system, voicechannels, tickets
 
 tracemalloc.start()
 
@@ -18,6 +18,7 @@ async def on_ready():
     logging.setup(tree, server_id)
     system.setup(tree, server_id)
     voicechannels.setup(tree, server_id)
+    tickets.setup(tree, server_id)
     
     await tree.sync(guild=discord.Object(id=server_id))
     print(f'Angemeldet als {client.user.name} (ID: {client.user.id})')
