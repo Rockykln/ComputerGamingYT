@@ -1,8 +1,11 @@
 from source.client.config.imports import *
 from source.client.config.client import client
-from source.client.config.performance_tracker import performance_tracker
-import wmi
-import GPUtil
+import asyncio
+from source.client.config.hardware_info import (
+	get_cpu_info, get_memory_info, get_disk_info,
+	get_gpu_info, get_motherboard_info
+)
+
 
 def get_size(bytes, suffix="B"):
 	factor = 1024
@@ -11,46 +14,11 @@ def get_size(bytes, suffix="B"):
 			return f"{bytes:.2f}{unit}{suffix}"
 		bytes /= factor
 
+
+
+
 def setup(tree: app_commands.CommandTree, server_id: str):
 
-	performance_tracker.start()
-	
-	@tree.command(
-		name="performance",
-		description="Zeigt Performance-Statistiken der letzten Stunden",
-		guild=discord.Object(id=server_id)
-	)
-	@app_commands.checks.has_permissions(administrator=True)
-	async def performance(interaction: Interaction, hours: int = 2):
-		await interaction.response.defer()
-		
-		metrics = performance_tracker.get_metrics(hours)
-		
-		cpu_avg = sum(v for _, v in metrics['cpu']) / len(metrics['cpu']) if metrics['cpu'] else 0
-		mem_avg = sum(v for _, v in metrics['memory']) / len(metrics['memory']) if metrics['memory'] else 0
-		disk_avg = sum(v for _, v in metrics['disk']) / len(metrics['disk']) if metrics['disk'] else 0
-		
-		embed = Embed(title="📊 Performance Übersicht", color=discord.Color.blue())
-		embed.add_field(
-			name="CPU Auslastung",
-			value=f"Durchschnitt: {cpu_avg:.1f}%\n"
-				  f"Aktuell: {psutil.cpu_percent()}%",
-			inline=False
-		)
-		embed.add_field(
-			name="RAM Auslastung",
-			value=f"Durchschnitt: {mem_avg:.1f}%\n"
-				  f"Aktuell: {psutil.virtual_memory().percent}%",
-			inline=False
-		)
-		embed.add_field(
-			name="Festplatten Auslastung",
-			value=f"Durchschnitt: {disk_avg:.1f}%\n"
-				  f"Aktuell: {psutil.disk_usage('/').percent}%",
-			inline=False
-		)
-		
-		await interaction.followup.send(embed=embed)
 
 	@tree.command(
 		name="processes",
@@ -59,23 +27,105 @@ def setup(tree: app_commands.CommandTree, server_id: str):
 	)
 	@app_commands.checks.has_permissions(administrator=True)
 	async def processes(interaction: Interaction):
+		await interaction.response.defer()
+		
 		processes = []
-		for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']):
+		for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent', 'create_time', 'status']):
 			try:
-				processes.append(proc.info)
+				proc.cpu_percent()  
 			except (psutil.NoSuchProcess, psutil.AccessDenied):
 				pass
+
+		await asyncio.sleep(1)
+		
+		for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent', 'create_time', 'status']):
+			try:
+				info = proc.info
+				processes.append(info)
+			except (psutil.NoSuchProcess, psutil.AccessDenied):
+				pass
+		
 		
 		processes.sort(key=lambda x: x['cpu_percent'], reverse=True)
 		
 		embed = Embed(title="🔄 Top Prozesse", color=discord.Color.blue())
 		process_text = ""
-		for proc in processes[:10]: 
+		for proc in processes[:40]:  
 			process_text += f"**{proc['name']}** (PID: {proc['pid']})\n"
-			process_text += f"CPU: {proc['cpu_percent']}% | RAM: {proc['memory_percent']:.1f}%\n\n"
+			process_text += f"CPU: {proc['cpu_percent']:.1f}% | RAM: {proc['memory_percent']:.1f}%\n"
+			process_text += f"Status: {proc['status']}\n\n"
 		
 		embed.description = process_text
-		await interaction.response.send_message(embed=embed)
+		await interaction.followup.send(embed=embed)
+
+
+
+
+	@tree.command(
+		name="services",
+		description="Zeigt laufende System-Services",
+		guild=discord.Object(id=server_id)
+	)
+	@app_commands.checks.has_permissions(administrator=True)
+	async def services(interaction: Interaction):
+		await interaction.response.defer()
+		
+		services_list = []
+		for service in psutil.win_service_iter():
+			try:
+				info = service.as_dict()
+				if info['status'] == 'running':
+					services_list.append(info)
+			except:
+				continue
+		
+		embed = Embed(title="🔧 Laufende System-Services", color=discord.Color.blue())
+		services_text = ""
+		for service in services_list[:15]:  
+			services_text += f"**{service['name']}**\n"
+			services_text += f"Display Name: {service['display_name']}\n"
+			services_text += f"Status: {service['status']}\n\n"
+		
+		embed.description = services_text
+		await interaction.followup.send(embed=embed)
+
+	@tree.command(
+		name="systemload",
+		description="Zeigt detaillierte System-Auslastung",
+		guild=discord.Object(id=server_id)
+	)
+	@app_commands.checks.has_permissions(administrator=True)
+	async def systemload(interaction: Interaction):
+		await interaction.response.defer()
+
+		cpu_freq = psutil.cpu_freq(percpu=True)
+		cpu_percent = psutil.cpu_percent(percpu=True)
+		
+		embed = Embed(title="📊 System-Auslastung", color=discord.Color.blue())
+		
+		cpu_text = "```\n"
+		for i, (freq, percent) in enumerate(zip(cpu_freq, cpu_percent)):
+			cpu_text += f"Core {i}: {percent}% @ {freq.current:.0f}MHz\n"
+		cpu_text += "```"
+		embed.add_field(name="CPU Auslastung pro Kern", value=cpu_text, inline=False)
+
+		memory = psutil.virtual_memory()
+		swap = psutil.swap_memory()
+		mem_text = f"```\nRAM Gesamt: {get_size(memory.total)}\n"
+		mem_text += f"RAM Verfügbar: {get_size(memory.available)}\n"
+		mem_text += f"RAM Genutzt: {memory.percent}%\n"
+		mem_text += f"Swap Genutzt: {swap.percent}%```"
+		embed.add_field(name="Speicher-Auslastung", value=mem_text, inline=False)
+		
+		
+		net_io = psutil.net_io_counters()
+		net_text = f"```\nGesendet: {get_size(net_io.bytes_sent)}\n"
+		net_text += f"Empfangen: {get_size(net_io.bytes_recv)}\n"
+		net_text += f"Pakete Gesendet: {net_io.packets_sent}\n"
+		net_text += f"Pakete Empfangen: {net_io.packets_recv}```"
+		embed.add_field(name="Netzwerk-Statistiken", value=net_text, inline=False)
+		
+		await interaction.followup.send(embed=embed)
 
 	@tree.command(
 		name="network",
@@ -114,64 +164,70 @@ def setup(tree: app_commands.CommandTree, server_id: str):
 		await interaction.response.defer()
 		
 		try:
-			w = wmi.WMI()
+
+			cpu_info = get_cpu_info()
+			memory_info = get_memory_info()
+			disk_info = get_disk_info()
+			gpu_info = get_gpu_info()
+			mobo_info = get_motherboard_info()
+
 			embed = Embed(title="💻 Hardware Informationen", color=discord.Color.blue())
+	
+			cpu_text = f"```\nModell: {cpu_info['model']}\n"
+			cpu_text += f"Physische Sockel: {cpu_info['sockets']}\n"
+			cpu_text += f"Physische Kerne: {cpu_info['physical_cores']}\n"
+			cpu_text += f"Logische Kerne: {cpu_info['total_cores']}\n"
+			cpu_text += f"Maximale Frequenz: {cpu_info['max_frequency']}MHz\n"
+			cpu_text += f"Aktuelle Frequenz: {cpu_info['current_frequency']}MHz\n"
+			cpu_text += f"Gesamtauslastung: {cpu_info['total_usage']}%```"
+			embed.add_field(name="CPU", value=cpu_text, inline=False)
+
+			ram_text = f"```\nGesamt: {memory_info['total']}\n"
+			ram_text += f"Verfügbar: {memory_info['available']}\n"
+			ram_text += f"Verwendet: {memory_info['used']}\n"
+			ram_text += f"Auslastung: {memory_info['percentage']}%\n"
+			ram_text += f"Swap Gesamt: {memory_info['swap_total']}\n"
+			ram_text += f"Swap Verwendet: {memory_info['swap_used']} ({memory_info['swap_percentage']}%)```"
+			embed.add_field(name="RAM", value=ram_text, inline=False)
 			
-			cpu_info = w.Win32_Processor()[0]
-			embed.add_field(
-				name="CPU",
-				value=f"```\nModell: {cpu_info.Name}\n"
-					  f"Kerne: {cpu_info.NumberOfCores}\n"
-					  f"Threads: {cpu_info.NumberOfLogicalProcessors}\n"
-					  f"Basis Takt: {cpu_info.MaxClockSpeed}MHz```",
-				inline=False
-			)
+			if gpu_info:
+				gpu_text = "```\n"
+				for i, gpu in enumerate(gpu_info, 1):
+					gpu_text += f"GPU {i}:\n"
+					gpu_text += f"Name: {gpu.get('name', 'N/A')}\n"
+					if 'memory' in gpu:
+						gpu_text += f"Speicher: {gpu['memory']}\n"
+					if 'driver_version' in gpu:
+						gpu_text += f"Treiber: {gpu['driver_version']}\n"
+					gpu_text += "\n"
+				gpu_text += "```"
+				embed.add_field(name="GPU(s)", value=gpu_text, inline=False)
 			
-			ram = psutil.virtual_memory()
-			ram_slots = w.Win32_PhysicalMemory()
-			ram_info = "```\n"
-			ram_info += f"Gesamt: {get_size(ram.total)}\n"
-			for slot in ram_slots:
-				ram_info += f"Slot: {get_size(int(slot.Capacity))} "
-				ram_info += f"({slot.Speed}MHz)\n"
-			ram_info += "```"
-			embed.add_field(name="RAM", value=ram_info, inline=False)
+		
+			mobo_text = f"```\nHersteller: {mobo_info['manufacturer']}\n"
+			mobo_text += f"Modell: {mobo_info['model']}\n"
+			mobo_text += f"Version: {mobo_info['version']}```"
+			embed.add_field(name="Motherboard", value=mobo_text, inline=False)
 			
-			try:
-				gpus = GPUtil.getGPUs()
-				if gpus:
-					gpu_info = "```\n"
-					for gpu in gpus:
-						gpu_info += f"Modell: {gpu.name}\n"
-						gpu_info += f"VRAM: {gpu.memoryTotal}MB\n"
-						gpu_info += f"Last: {gpu.load*100:.1f}%\n"
-					gpu_info += "```"
-					embed.add_field(name="GPU", value=gpu_info, inline=False)
-			except:
-				pass  
 			
-			disk_info = "```\n"
-			for disk in w.Win32_DiskDrive():
-				size = int(disk.Size or 0)
-				disk_info += f"Laufwerk: {disk.Model}\n"
-				if size > 0:
-					disk_info += f"Größe: {get_size(size)}\n"
-			disk_info += "```"
-			embed.add_field(name="Festplatten", value=disk_info, inline=False)
-			
-			board = w.Win32_BaseBoard()[0]
-			embed.add_field(
-				name="Motherboard",
-				value=f"```\nHersteller: {board.Manufacturer}\n"
-					  f"Modell: {board.Product}```",
-				inline=False
-			)
+			disk_text = "```\n"
+			for disk in disk_info:
+				disk_text += f"Laufwerk: {disk['device']}\n"
+				disk_text += f"Dateisystem: {disk['filesystem']}\n"
+				disk_text += f"Größe: {disk['total']}\n"
+				disk_text += f"Verwendet: {disk['used']} ({disk['percentage']}%)\n"
+				disk_text += f"Frei: {disk['free']}\n\n"
+			disk_text += "```"
+			embed.add_field(name="Festplatten", value=disk_text, inline=False)
 			
 			await interaction.followup.send(embed=embed)
 			
 		except Exception as e:
 			print(f"Hardware info error: {str(e)}")
 			await interaction.followup.send("Fehler beim Abrufen der Hardware-Informationen.")
+
+
+
 
 	@tree.command(
 		name="uptime",
