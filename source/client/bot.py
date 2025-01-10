@@ -13,13 +13,14 @@ tree = discord.app_commands.CommandTree(client)
 
 @client.event
 async def on_ready():
-    
+    # Setup commands
     radio.setup(tree, server_id)
     logging.setup(tree, server_id)
     system.setup(tree, server_id)
     
     await tree.sync(guild=discord.Object(id=server_id))
     print(f'Angemeldet als {client.user.name} (ID: {client.user.id})')
+
 
 snapshot = tracemalloc.take_snapshot()
 top_stats = snapshot.statistics('lineno')

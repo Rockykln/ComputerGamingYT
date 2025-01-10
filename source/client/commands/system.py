@@ -1,5 +1,8 @@
 from source.client.config.imports import *
 from source.client.config.client import client
+from source.client.config.performance_tracker import performance_tracker
+import wmi
+import GPUtil
 
 def get_size(bytes, suffix="B"):
 	factor = 1024
@@ -9,106 +12,182 @@ def get_size(bytes, suffix="B"):
 		bytes /= factor
 
 def setup(tree: app_commands.CommandTree, server_id: str):
+
+	performance_tracker.start()
 	
 	@tree.command(
-		name="sysinfo",
-		description="Zeigt Systeminformationen an",
+		name="performance",
+		description="Zeigt Performance-Statistiken der letzten Stunden",
 		guild=discord.Object(id=server_id)
 	)
-	async def sysinfo(interaction: Interaction):
+	@app_commands.checks.has_permissions(administrator=True)
+	async def performance(interaction: Interaction, hours: int = 2):
+		await interaction.response.defer()
+		
+		metrics = performance_tracker.get_metrics(hours)
+		
+		cpu_avg = sum(v for _, v in metrics['cpu']) / len(metrics['cpu']) if metrics['cpu'] else 0
+		mem_avg = sum(v for _, v in metrics['memory']) / len(metrics['memory']) if metrics['memory'] else 0
+		disk_avg = sum(v for _, v in metrics['disk']) / len(metrics['disk']) if metrics['disk'] else 0
+		
+		embed = Embed(title="📊 Performance Übersicht", color=discord.Color.blue())
+		embed.add_field(
+			name="CPU Auslastung",
+			value=f"Durchschnitt: {cpu_avg:.1f}%\n"
+				  f"Aktuell: {psutil.cpu_percent()}%",
+			inline=False
+		)
+		embed.add_field(
+			name="RAM Auslastung",
+			value=f"Durchschnitt: {mem_avg:.1f}%\n"
+				  f"Aktuell: {psutil.virtual_memory().percent}%",
+			inline=False
+		)
+		embed.add_field(
+			name="Festplatten Auslastung",
+			value=f"Durchschnitt: {disk_avg:.1f}%\n"
+				  f"Aktuell: {psutil.disk_usage('/').percent}%",
+			inline=False
+		)
+		
+		await interaction.followup.send(embed=embed)
+
+	@tree.command(
+		name="processes",
+		description="Zeigt die Top-Prozesse nach CPU-Auslastung",
+		guild=discord.Object(id=server_id)
+	)
+	@app_commands.checks.has_permissions(administrator=True)
+	async def processes(interaction: Interaction):
+		processes = []
+		for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']):
+			try:
+				processes.append(proc.info)
+			except (psutil.NoSuchProcess, psutil.AccessDenied):
+				pass
+		
+		processes.sort(key=lambda x: x['cpu_percent'], reverse=True)
+		
+		embed = Embed(title="🔄 Top Prozesse", color=discord.Color.blue())
+		process_text = ""
+		for proc in processes[:10]: 
+			process_text += f"**{proc['name']}** (PID: {proc['pid']})\n"
+			process_text += f"CPU: {proc['cpu_percent']}% | RAM: {proc['memory_percent']:.1f}%\n\n"
+		
+		embed.description = process_text
+		await interaction.response.send_message(embed=embed)
+
+	@tree.command(
+		name="network",
+		description="Zeigt Netzwerk-Statistiken",
+		guild=discord.Object(id=server_id)
+	)
+	@app_commands.checks.has_permissions(administrator=True)
+	async def network(interaction: Interaction):
+		net_io = psutil.net_io_counters()
+		
+		embed = Embed(title="🌐 Netzwerk Statistiken", color=discord.Color.blue())
+		embed.add_field(
+			name="Gesendet",
+			value=get_size(net_io.bytes_sent),
+			inline=True
+		)
+		embed.add_field(
+			name="Empfangen",
+			value=get_size(net_io.bytes_recv),
+			inline=True
+		)
+		embed.add_field(
+			name="Pakete",
+			value=f"Gesendet: {net_io.packets_sent}\nEmpfangen: {net_io.packets_recv}",
+			inline=False
+		)
+		
+		await interaction.response.send_message(embed=embed)
+
+	@tree.command(
+		name="hardware",
+		description="Zeigt detaillierte Hardware-Informationen",
+		guild=discord.Object(id=server_id)
+	)
+	async def hardware(interaction: Interaction):
+		await interaction.response.defer()
+		
 		try:
-			embed = Embed(title="🖥️ Systeminformationen", color=discord.Color.blue())
+			w = wmi.WMI()
+			embed = Embed(title="💻 Hardware Informationen", color=discord.Color.blue())
 			
-			cpu_freq = psutil.cpu_freq()
-			cpu_usage = psutil.cpu_percent(interval=1)
+			cpu_info = w.Win32_Processor()[0]
 			embed.add_field(
 				name="CPU",
-				value=f"```\nModell: {platform.processor()}\n"
-					  f"Nutzung: {cpu_usage}%\n"
-					  f"Frequenz: {cpu_freq.current:.2f}MHz```",
+				value=f"```\nModell: {cpu_info.Name}\n"
+					  f"Kerne: {cpu_info.NumberOfCores}\n"
+					  f"Threads: {cpu_info.NumberOfLogicalProcessors}\n"
+					  f"Basis Takt: {cpu_info.MaxClockSpeed}MHz```",
 				inline=False
 			)
 			
-			mem = psutil.virtual_memory()
+			ram = psutil.virtual_memory()
+			ram_slots = w.Win32_PhysicalMemory()
+			ram_info = "```\n"
+			ram_info += f"Gesamt: {get_size(ram.total)}\n"
+			for slot in ram_slots:
+				ram_info += f"Slot: {get_size(int(slot.Capacity))} "
+				ram_info += f"({slot.Speed}MHz)\n"
+			ram_info += "```"
+			embed.add_field(name="RAM", value=ram_info, inline=False)
+			
+			try:
+				gpus = GPUtil.getGPUs()
+				if gpus:
+					gpu_info = "```\n"
+					for gpu in gpus:
+						gpu_info += f"Modell: {gpu.name}\n"
+						gpu_info += f"VRAM: {gpu.memoryTotal}MB\n"
+						gpu_info += f"Last: {gpu.load*100:.1f}%\n"
+					gpu_info += "```"
+					embed.add_field(name="GPU", value=gpu_info, inline=False)
+			except:
+				pass  
+			
+			disk_info = "```\n"
+			for disk in w.Win32_DiskDrive():
+				size = int(disk.Size or 0)
+				disk_info += f"Laufwerk: {disk.Model}\n"
+				if size > 0:
+					disk_info += f"Größe: {get_size(size)}\n"
+			disk_info += "```"
+			embed.add_field(name="Festplatten", value=disk_info, inline=False)
+			
+			board = w.Win32_BaseBoard()[0]
 			embed.add_field(
-				name="RAM",
-				value=f"```\nGesamt: {get_size(mem.total)}\n"
-					  f"Verfügbar: {get_size(mem.available)}\n"
-					  f"Genutzt: {mem.percent}%```",
+				name="Motherboard",
+				value=f"```\nHersteller: {board.Manufacturer}\n"
+					  f"Modell: {board.Product}```",
 				inline=False
 			)
 			
-			disk = psutil.disk_usage('/')
-			embed.add_field(
-				name="Festplatte",
-				value=f"```\nGesamt: {get_size(disk.total)}\n"
-					  f"Verfügbar: {get_size(disk.free)}\n"
-					  f"Genutzt: {disk.percent}%```",
-				inline=False
-			)
-			
-			await interaction.response.send_message(embed=embed)
+			await interaction.followup.send(embed=embed)
 			
 		except Exception as e:
-			await interaction.response.send_message(f"Fehler beim Abrufen der Systeminformationen: {str(e)}")
+			print(f"Hardware info error: {str(e)}")
+			await interaction.followup.send("Fehler beim Abrufen der Hardware-Informationen.")
 
 	@tree.command(
-		name="drives",
-		description="Zeigt Informationen über alle Laufwerke",
+		name="uptime",
+		description="Zeigt System- und Bot-Uptime",
 		guild=discord.Object(id=server_id)
 	)
-	async def drives(interaction: Interaction):
-		try:
-			embed = Embed(title="💾 Laufwerksinformationen", color=discord.Color.blue())
-			
-			partitions = psutil.disk_partitions()
-			for partition in partitions:
-				try:
-					partition_usage = psutil.disk_usage(partition.mountpoint)
-					embed.add_field(
-						name=f"Laufwerk {partition.device}",
-						value=f"```\nDateisystem: {partition.fstype}\n"
-							  f"Gesamt: {get_size(partition_usage.total)}\n"
-							  f"Genutzt: {partition_usage.percent}%```",
-						inline=False
-					)
-				except Exception:
-					continue
-			
-			await interaction.response.send_message(embed=embed)
-			
-		except Exception as e:
-			await interaction.response.send_message(f"Fehler beim Abrufen der Laufwerksinformationen: {str(e)}")
-
-	@tree.command(
-		name="netinfo",
-		description="Zeigt Netzwerkinformationen",
-		guild=discord.Object(id=server_id)
-	)
-	async def netinfo(interaction: Interaction):
-		try:
-			embed = Embed(title="🌐 Netzwerkinformationen", color=discord.Color.blue())
-			
-			net_if_addrs = psutil.net_if_addrs()
-			net_io = psutil.net_io_counters()
-
-			embed.add_field(
-				name="Netzwerk I/O",
-				value=f"```\nGesendet: {get_size(net_io.bytes_sent)}\n"
-					  f"Empfangen: {get_size(net_io.bytes_recv)}```",
-				inline=False
-			)
-
-			for interface_name, interface_addresses in net_if_addrs.items():
-				for addr in interface_addresses:
-					if str(addr.family) == 'AddressFamily.AF_INET':
-						embed.add_field(
-							name=f"Interface: {interface_name}",
-							value=f"```\nIP: {addr.address}\nNetmask: {addr.netmask}```",
-							inline=False
-						)
-			
-			await interaction.response.send_message(embed=embed)
-			
-		except Exception as e:
-			await interaction.response.send_message(f"Fehler beim Abrufen der Netzwerkinformationen: {str(e)}")
+	async def uptime(interaction: Interaction):
+		boot_time = datetime.fromtimestamp(psutil.boot_time())
+		uptime = datetime.now() - boot_time
+		
+		embed = Embed(title="⏰ Uptime Information", color=discord.Color.blue())
+		embed.add_field(
+			name="System Uptime",
+			value=f"{uptime.days} Tage, {uptime.seconds//3600} Stunden, "
+				  f"{(uptime.seconds//60)%60} Minuten",
+			inline=False
+		)
+		
+		await interaction.response.send_message(embed=embed)

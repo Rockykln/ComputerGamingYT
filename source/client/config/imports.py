@@ -1,6 +1,8 @@
 
 import discord
 import discord.voice_client
+import wmi
+import GPUtil
 
 from discord import (
 	Status, 
@@ -39,14 +41,13 @@ import platform
 import psutil
 import urllib.parse
 import tracemalloc
-import uvicorn
 import json
 import requests
 
 from dotenv import load_dotenv
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any
-from flask import Flask, render_template
+
 
 
 
