@@ -1,8 +1,7 @@
 from source.client.config.imports import *
 from source.client.config.client import client
 from source.client.config.performance_tracker import performance_tracker
-import wmi
-import GPUtil
+from source.client.config.hardware_info import get_gpu_info, get_cpu_info
 
 def get_size(bytes, suffix="B"):
 	factor = 1024
@@ -11,8 +10,10 @@ def get_size(bytes, suffix="B"):
 			return f"{bytes:.2f}{unit}{suffix}"
 		bytes /= factor
 
-def setup(tree: app_commands.CommandTree, server_id: str):
 
+
+
+def setup(tree: app_commands.CommandTree, server_id: str):
 	performance_tracker.start()
 	
 	@tree.command(
@@ -107,71 +108,52 @@ def setup(tree: app_commands.CommandTree, server_id: str):
 
 	@tree.command(
 		name="hardware",
-		description="Zeigt detaillierte Hardware-Informationen",
+		description="Zeigt Hardware-Informationen",
 		guild=discord.Object(id=server_id)
 	)
 	async def hardware(interaction: Interaction):
 		await interaction.response.defer()
 		
-		try:
-			w = wmi.WMI()
-			embed = Embed(title="💻 Hardware Informationen", color=discord.Color.blue())
-			
-			cpu_info = w.Win32_Processor()[0]
-			embed.add_field(
-				name="CPU",
-				value=f"```\nModell: {cpu_info.Name}\n"
-					  f"Kerne: {cpu_info.NumberOfCores}\n"
-					  f"Threads: {cpu_info.NumberOfLogicalProcessors}\n"
-					  f"Basis Takt: {cpu_info.MaxClockSpeed}MHz```",
-				inline=False
-			)
-			
-			ram = psutil.virtual_memory()
-			ram_slots = w.Win32_PhysicalMemory()
-			ram_info = "```\n"
-			ram_info += f"Gesamt: {get_size(ram.total)}\n"
-			for slot in ram_slots:
-				ram_info += f"Slot: {get_size(int(slot.Capacity))} "
-				ram_info += f"({slot.Speed}MHz)\n"
-			ram_info += "```"
-			embed.add_field(name="RAM", value=ram_info, inline=False)
-			
-			try:
-				gpus = GPUtil.getGPUs()
-				if gpus:
-					gpu_info = "```\n"
-					for gpu in gpus:
-						gpu_info += f"Modell: {gpu.name}\n"
-						gpu_info += f"VRAM: {gpu.memoryTotal}MB\n"
-						gpu_info += f"Last: {gpu.load*100:.1f}%\n"
-					gpu_info += "```"
-					embed.add_field(name="GPU", value=gpu_info, inline=False)
-			except:
-				pass  
-			
-			disk_info = "```\n"
-			for disk in w.Win32_DiskDrive():
-				size = int(disk.Size or 0)
-				disk_info += f"Laufwerk: {disk.Model}\n"
-				if size > 0:
-					disk_info += f"Größe: {get_size(size)}\n"
-			disk_info += "```"
-			embed.add_field(name="Festplatten", value=disk_info, inline=False)
-			
-			board = w.Win32_BaseBoard()[0]
-			embed.add_field(
-				name="Motherboard",
-				value=f"```\nHersteller: {board.Manufacturer}\n"
-					  f"Modell: {board.Product}```",
-				inline=False
-			)
-			
-			await interaction.followup.send(embed=embed)
-			
-		except Exception as e:
-			print(f"Hardware info error: {str(e)}")
-			await interaction.followup.send("Fehler beim Abrufen der Hardware-Informationen.")
+		cpu_info = get_cpu_info()
+		cpu_usage = psutil.cpu_percent(interval=1)
+		
+		gpus = get_gpu_info()
+		
+		memory = psutil.virtual_memory()
+		
+		embed = Embed(title="💻 Hardware Informationen", color=discord.Color.blue())
+		
+		embed.add_field(
+			name="CPU",
+			value=f"```\nModell: {cpu_info['name']}\n"
+				  f"Kerne: {cpu_info['cores']}\n"
+				  f"Architektur: {cpu_info['architecture']}\n"
+				  f"Auslastung: {cpu_usage}%```",
+			inline=False
+		)
+		
+		gpu_text = "```\n"
+		for gpu in gpus:
+			gpu_text += f"GPU: {gpu['name']}\n"
+			if 'memory' in gpu:
+				gpu_text += f"VRAM: {gpu['memory']}\n"
+			if 'driver' in gpu:
+				gpu_text += f"Treiber: {gpu['driver']}\n"
+			gpu_text += "\n"
+		gpu_text += "```"
+		embed.add_field(name="GPU", value=gpu_text, inline=False)
+		
+		embed.add_field(
+			name="RAM",
+			value=f"```\nGesamt: {get_size(memory.total)}\n"
+				  f"Verfügbar: {get_size(memory.available)}\n"
+				  f"Auslastung: {memory.percent}%```",
+			inline=False
+		)
+		
+		await interaction.followup.send(embed=embed)
+
+
 
 	@tree.command(
 		name="uptime",

@@ -13,11 +13,13 @@ tree = discord.app_commands.CommandTree(client)
 
 @client.event
 async def on_ready():
- 
+
     radio.setup(tree, server_id)
     logging.setup(tree, server_id)
     system.setup(tree, server_id)
-    voicechannels.setup(tree, server_id)
+    voice_handler = voicechannels.setup(tree, server_id)
+    if voice_handler:
+        client.event(voice_handler)
     tickets.setup(tree, server_id)
     
     await tree.sync(guild=discord.Object(id=server_id))

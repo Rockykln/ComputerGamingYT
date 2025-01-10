@@ -1,9 +1,6 @@
 
 import discord
 import discord.voice_client
-import wmi
-import GPUtil
-
 from discord import (
 	Status, 
 	ActivityType, 
@@ -27,6 +24,7 @@ from discord.gateway import DiscordWebSocket, _log
 from discord.utils import get
 from discord.app_commands import CommandInvokeError
 
+
 import os
 import io
 import sys
@@ -43,13 +41,9 @@ import urllib.parse
 import tracemalloc
 import json
 import requests
-
 from dotenv import load_dotenv
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any
-
-
-
 
 
 
