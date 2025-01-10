@@ -225,25 +225,3 @@ def setup(tree: app_commands.CommandTree, server_id: str):
 		except Exception as e:
 			print(f"Hardware info error: {str(e)}")
 			await interaction.followup.send("Fehler beim Abrufen der Hardware-Informationen.")
-
-
-
-
-	@tree.command(
-		name="uptime",
-		description="Zeigt System- und Bot-Uptime",
-		guild=discord.Object(id=server_id)
-	)
-	async def uptime(interaction: Interaction):
-		boot_time = datetime.fromtimestamp(psutil.boot_time())
-		uptime = datetime.now() - boot_time
-		
-		embed = Embed(title="⏰ Uptime Information", color=discord.Color.blue())
-		embed.add_field(
-			name="System Uptime",
-			value=f"{uptime.days} Tage, {uptime.seconds//3600} Stunden, "
-				  f"{(uptime.seconds//60)%60} Minuten",
-			inline=False
-		)
-		
-		await interaction.response.send_message(embed=embed)
